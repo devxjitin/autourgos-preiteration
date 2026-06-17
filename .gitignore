@@ -1,0 +1,23 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Temp image cache files
+autourgos_img_*.jpg
+
+# OS
+.DS_Store
+Thumbs.db
