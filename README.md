@@ -56,6 +56,12 @@ result = agent.invoke("Open the browser and search for Python 3.13 release notes
 print(result)
 ```
 
+When used with a verbose `ReactAgent` (`verbose=True`), `PreIterationMiddleware` also narrates its own actions into the agent's trace, right alongside the Thought/Action/Observation lines, e.g.:
+
+```
+[PreIteration] Injected 1 file(s) before iteration 2.
+```
+
 ---
 
 ## Run multiple callbacks

@@ -169,6 +169,7 @@ def _preprocess_image(
     path: str,
     image_quality: Union[str, int],
     logger: logging.Logger,
+    created_files: Optional[List[str]] = None,
 ) -> str:
     """Resize and re-encode an image based on image_quality. Results are cached."""
     quality_key = str(image_quality)
@@ -218,6 +219,8 @@ def _preprocess_image(
         tmp.close()
         img.save(tmp.name, format="JPEG", quality=jpeg_quality, optimize=True)
         _image_cache[cache_key] = tmp.name
+        if created_files is not None:
+            created_files.append(tmp.name)
         return tmp.name
     except Exception as exc:
         logger.warning(
@@ -298,7 +301,12 @@ class PreIterationMiddleware(CallbackHandler):
         self._files        = files
         self.image_quality = image_quality
         self._current_kwargs: Dict[str, Any] = {}
-        self.logger = logging.getLogger("autourgos.preiteration")
+        self.logger = logging.getLogger(__name__)
+        # Temp files created (via Pillow preprocessing) during the current
+        # agent run. Cleaned up in on_agent_end/on_agent_error, but only if
+        # they are no longer referenced by the shared _image_cache (a cache
+        # hit for the same unchanged image on a later run must keep working).
+        self._created_temp_files: List[str] = []
 
     def on_iteration_start(self, iteration: int, agent: Any = None, **kwargs: Any) -> None:
         # run callback
@@ -330,7 +338,10 @@ class PreIterationMiddleware(CallbackHandler):
 
                 if raw:
                     processed = [
-                        _preprocess_image(f, self.image_quality, self.logger)
+                        _preprocess_image(
+                            f, self.image_quality, self.logger,
+                            created_files=self._created_temp_files,
+                        )
                         if _is_image(f) else f
                         for f in raw
                     ]
@@ -339,6 +350,56 @@ class PreIterationMiddleware(CallbackHandler):
                     if detail is not None:
                         self._current_kwargs["image_detail"] = detail
 
+                    narrate_logger = getattr(agent, "logger", None)
+                    if narrate_logger:
+                        narrate_logger.middleware(
+                            "PreIteration",
+                            f"Injected {len(processed)} file(s) before iteration {iteration}.",
+                        )
+
     def get_injection_kwargs(self) -> Dict[str, Any]:
         """Return file-injection kwargs to pass to the LLM call."""
         return dict(self._current_kwargs)
+
+    def on_before_iteration(self, iteration: int, agent: Any = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """
+        Fired by react-agent right before the LLM is invoked for this
+        iteration. Returns whatever files/image_detail kwargs were already
+        resolved for this iteration by on_iteration_start (which react-agent
+        calls first), so react-agent merges them into that iteration's
+        ``llm.invoke()``/``llm.ainvoke()`` call.
+
+        Does not re-resolve files itself — on_iteration_start already did
+        that and stashed the result in self._current_kwargs, avoiding
+        duplicate work (and duplicate image preprocessing).
+        """
+        injection = self.get_injection_kwargs()
+        return injection or None
+
+    def _cleanup_temp_files(self) -> None:
+        """
+        Remove temp files created during this run by ``_preprocess_image``,
+        skipping any file that is still referenced by the shared
+        ``_image_cache`` (so a later run with the same unchanged image can
+        still hit the cache and reuse it without reprocessing).
+        """
+        if not self._created_temp_files:
+            return
+        live_cached_paths = set(_image_cache.values())
+        for tmp_path in self._created_temp_files:
+            if tmp_path in live_cached_paths:
+                continue
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                # Best-effort: already deleted, permission issue, etc.
+                self.logger.debug(
+                    "Could not remove temp file %r during cleanup", tmp_path, exc_info=True,
+                )
+        self._created_temp_files = []
+
+    def on_agent_end(self, response: str, agent: Any = None, **kwargs: Any) -> None:
+        self._cleanup_temp_files()
+
+    def on_agent_error(self, error: Exception, agent: Any = None, **kwargs: Any) -> None:
+        self._cleanup_temp_files()
