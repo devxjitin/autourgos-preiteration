@@ -1,17 +1,20 @@
 # Changelog
 
-## [3.0.0] - 2026-07-27
+## [3.0.0] - 2026-07-27 (unreleased on PyPI until now)
 
-- BREAKING: requires autourgos-react-agent>=1.6.0.
+- BREAKING: requires autourgos-agent>=2.0.2 (previously pinned to
+  autourgos-react-agent>=1.6.0 before this version ever shipped to PyPI —
+  autourgos-react-agent's releases are now fully yanked and this floor
+  would have made the package uninstallable from day one).
 - Fixed: per-iteration file injection (`files=`/`image_quality=`) was
-  silently broken against a real `ReactAgent` — `get_injection_kwargs()`
-  was never called by anything, because react-agent previously only
+  silently broken against a real `Agent` — `get_injection_kwargs()`
+  was never called by anything, because the agent loop previously only
   accepted `extra_kwargs` once at `invoke()` time. This release implements
-  `on_before_iteration` on `PreIterationMiddleware`, using the new
-  react-agent 1.6.0 hook so the files/image_detail kwargs resolved by
+  `on_before_iteration` on `PreIterationMiddleware`, using the
+  `on_before_iteration` hook so the files/image_detail kwargs resolved by
   `on_iteration_start` are now actually merged into that iteration's real
   LLM call.
-- Tests rewritten to run against `make_test_agent()` (a real `ReactAgent`)
+- Tests rewritten to run against `make_test_agent()` (a real `Agent`)
   instead of hand-rolled fake agents, and now assert that the LLM's
   `.invoke()` call for an iteration actually received the `files`/
   `image_detail` kwargs that preiteration computed.

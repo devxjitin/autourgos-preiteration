@@ -38,7 +38,7 @@ Zero required dependencies. Works with any Autourgos agent.
 
 ```python
 from autourgos_preiteration import PreIterationMiddleware
-from autourgos_react_agent import ReactAgent
+from autourgos_agent import Agent
 
 SCREENSHOT = "/tmp/screen.png"
 
@@ -51,12 +51,12 @@ middleware = PreIterationMiddleware(
     image_quality="low",  # ~85 tokens flat — great for computer-use agents
 )
 
-agent = ReactAgent(llm=my_llm, middleware=[middleware])
+agent = Agent(llm=my_llm, middleware=[middleware])
 result = agent.invoke("Open the browser and search for Python 3.13 release notes")
 print(result)
 ```
 
-When used with a verbose `ReactAgent` (`verbose=True`), `PreIterationMiddleware` also narrates its own actions into the agent's trace, right alongside the Thought/Action/Observation lines, e.g.:
+When used with a verbose `Agent` (`verbose=True`), `PreIterationMiddleware` also narrates its own actions into the agent's trace, right alongside the Thought/Action/Observation lines, e.g.:
 
 ```
 [PreIteration] Injected 1 file(s) before iteration 2.
@@ -175,7 +175,7 @@ middleware = [
     AutoSummarizeMiddleware(summarize_every=5),
     AgentHistoryMiddleware(),
 ]
-agent = ReactAgent(llm=my_llm, middleware=middleware)
+agent = Agent(llm=my_llm, middleware=middleware)
 ```
 
 ---

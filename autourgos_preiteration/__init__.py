@@ -14,7 +14,7 @@ Quick start::
         files="/tmp/screen.png",
         image_quality="low",
     )
-    agent = ReactAgent(llm=my_llm, middleware=[middleware])
+    agent = Agent(llm=my_llm, middleware=[middleware])
 """
 
 from .base import CallbackHandler

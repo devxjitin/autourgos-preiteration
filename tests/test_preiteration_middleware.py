@@ -13,7 +13,7 @@ import pytest
 PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402
 
-from autourgos_react_agent.testing import make_test_agent
+from autourgos_agent.testing import make_test_agent
 
 from autourgos_preiteration import middleware as mw_module
 from autourgos_preiteration.middleware import PreIterationMiddleware
@@ -193,7 +193,7 @@ def test_no_crash_when_agent_has_no_logger_attribute(tmp_path):
     assert "files" in kwargs
 
 
-# -- on_before_iteration reaches the real LLM call (real ReactAgent) ----------
+# -- on_before_iteration reaches the real LLM call (real Agent) ----------
 #
 # Before this release, get_injection_kwargs() was computed but nothing ever
 # called it — react-agent only accepted extra_kwargs once at invoke() time.
@@ -229,7 +229,7 @@ def test_on_before_iteration_returns_none_when_no_files_resolved():
 
 def test_real_agent_llm_invoke_actually_receives_injected_kwargs(tmp_path):
     """
-    End-to-end against a real ReactAgent (make_test_agent): the scripted
+    End-to-end against a real Agent (make_test_agent): the scripted
     fake LLM records the kwargs it was called with for each iteration. This
     asserts that the files/image_detail kwargs PreIterationMiddleware
     resolves via on_iteration_start actually reach the real

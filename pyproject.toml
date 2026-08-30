@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-dependencies = ["autourgos-react-agent>=1.6.0"]
+dependencies = ["autourgos-agent>=2.0.2"]
 
 [project.optional-dependencies]
 images = ["Pillow>=9.0"]
