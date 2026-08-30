@@ -9,6 +9,7 @@ import inspect
 import logging
 import os
 import tempfile
+import threading
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from .base import CallbackHandler
@@ -150,8 +151,20 @@ _IMAGE_QUALITY_TIERS: Dict[str, Tuple] = {
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 
-# (source_path, mtime, quality_key) -> preprocessed_path
-_image_cache: Dict[Tuple, str] = {}
+# (source_path, quality_key) -> (mtime, preprocessed_path)
+#
+# Keyed WITHOUT mtime so there is at most one live entry per (path, quality):
+# when the source file's mtime changes (e.g. a screenshot re-taken every
+# iteration), the stale entry's temp file is deleted immediately below
+# instead of being left to accumulate forever -- previously this was keyed
+# by (path, mtime, quality_key), so every iteration added a new entry that
+# was NEVER evicted, and _cleanup_temp_files() only skips deleting a temp
+# file that's still "referenced" by the cache -- which every orphaned entry
+# always was, since nothing ever removed them. That leaked one temp file per
+# iteration for the entire life of the process for the package's own
+# headline use case (a screenshot injected on every iteration).
+_image_cache: Dict[Tuple[str, str], Tuple[float, str]] = {}
+_image_cache_lock = threading.Lock()
 
 
 def _is_image(path: str) -> bool:
@@ -178,11 +191,13 @@ def _preprocess_image(
     except OSError:
         return path
 
-    cache_key = (path, mtime, quality_key)
-    if cache_key in _image_cache:
-        cached = _image_cache[cache_key]
-        if os.path.exists(cached):
-            return cached
+    cache_key = (path, quality_key)
+    with _image_cache_lock:
+        cached = _image_cache.get(cache_key)
+    if cached is not None:
+        cached_mtime, cached_path = cached
+        if cached_mtime == mtime and os.path.exists(cached_path):
+            return cached_path
 
     if isinstance(image_quality, int):
         jpeg_quality = max(1, min(100, image_quality))
@@ -218,7 +233,14 @@ def _preprocess_image(
         )
         tmp.close()
         img.save(tmp.name, format="JPEG", quality=jpeg_quality, optimize=True)
-        _image_cache[cache_key] = tmp.name
+        with _image_cache_lock:
+            stale = _image_cache.get(cache_key)
+            _image_cache[cache_key] = (mtime, tmp.name)
+        if stale is not None and stale[1] != tmp.name:
+            try:
+                os.remove(stale[1])
+            except OSError:
+                pass
         if created_files is not None:
             created_files.append(tmp.name)
         return tmp.name
@@ -385,7 +407,8 @@ class PreIterationMiddleware(CallbackHandler):
         """
         if not self._created_temp_files:
             return
-        live_cached_paths = set(_image_cache.values())
+        with _image_cache_lock:
+            live_cached_paths = {v[1] for v in _image_cache.values()}
         for tmp_path in self._created_temp_files:
             if tmp_path in live_cached_paths:
                 continue

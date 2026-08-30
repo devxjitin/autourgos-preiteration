@@ -71,8 +71,10 @@ def test_temp_files_cleaned_up_after_agent_end(tmp_path):
     first_processed = middleware.get_injection_kwargs()["files"][0]
     assert os.path.exists(first_processed)
 
-    # Simulate the image changing mid-run (new mtime => cache miss => new temp file,
-    # old temp file for this path/quality is evicted from the cache dict).
+    # Simulate the image changing mid-run (new mtime => cache miss). The
+    # cache is keyed by (path, quality) without mtime, so _preprocess_image
+    # itself evicts and deletes the stale (path, quality) entry's temp file
+    # as soon as the new one is produced -- no manual eviction needed here.
     os.utime(img_path, None)
     _make_image(img_path, size=(50, 50))
     os.utime(img_path, (os.path.getatime(img_path), os.path.getmtime(img_path) + 5))
@@ -81,14 +83,9 @@ def test_temp_files_cleaned_up_after_agent_end(tmp_path):
     second_processed = middleware.get_injection_kwargs()["files"][0]
 
     assert first_processed != second_processed
-
-    # The cache is keyed by (path, mtime, quality); a changed mtime produces a
-    # new key rather than evicting the old one, so simulate real eviction of
-    # the stale entry (e.g. by a cache-size/TTL policy) before cleanup runs.
-    stale_keys = [k for k, v in mw_module._image_cache.items() if v == first_processed]
-    for k in stale_keys:
-        del mw_module._image_cache[k]
-    assert first_processed not in mw_module._image_cache.values()
+    # the stale entry was deleted immediately on mtime-change, not left to
+    # accumulate until on_agent_end's cleanup pass.
+    assert not os.path.exists(first_processed)
 
     middleware.on_agent_end("done", agent=agent)
 
