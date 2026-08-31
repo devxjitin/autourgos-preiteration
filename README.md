@@ -1,12 +1,54 @@
 # autourgos-preiteration
 
-Pre-iteration middleware for [Autourgos](https://github.com/devxjitin) agents.
+[![Framework: Autourgos](https://img.shields.io/badge/Framework-Autourgos-orange.svg)](https://github.com/devxjitin)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://pypi.org/project/autourgos-preiteration/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://github.com/devxjitin/autourgos-preiteration/blob/main/LICENSE)
+[![Author](https://img.shields.io/badge/Author-Jitin%20Kumar%20Sengar-blue.svg)](https://github.com/devxjitin)
+[![Contributor](https://img.shields.io/badge/Contributor-Sonia-blueviolet.svg)]()
+[![Contributor](https://img.shields.io/badge/Contributor-Vishwanil%20Suman-blueviolet.svg)]()
 
-Run any sync or async callback — and inject files like screenshots — before every agent iteration. Built-in image compression keeps vision LLM costs low.
+Pre-iteration middleware for [Autourgos](https://github.com/devxjitin) agents. Run any sync or async callback
+— and inject files like screenshots — before every agent iteration. Built-in image compression keeps vision
+LLM costs low.
+
+```python
+from autourgos_preiteration import PreIterationMiddleware
+from autourgos_agent import Agent
+
+middleware = PreIterationMiddleware(callback=capture, files="/tmp/screen.png", image_quality="low")
+agent = Agent(llm=my_llm, middleware=[middleware])
+result = agent.invoke("Open the browser and search for Python 3.13 release notes")
+```
 
 ---
 
-## Why use this?
+## Features
+
+- **Fresh context every iteration** — screenshots, live data, health pings, whatever your callback produces
+- **`SEQUENTIAL`/`PARALLEL` combinators** for running multiple callbacks
+- **Sync and async callbacks**, both work inside `invoke()` and `ainvoke()`
+- **Dynamic file injection** — pass a callable for `files` to generate a fresh path per iteration
+- **Built-in image compression** (via optional Pillow) — from a flat ~85 tokens (`"low"`) to no resize
+  (`"auto"`)
+- Zero required dependencies; works with any Autourgos agent
+
+---
+
+## Table of Contents
+
+- [Why Use This?](#why-use-this)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Run Multiple Callbacks](#run-multiple-callbacks)
+- [Async Callbacks](#async-callbacks)
+- [Dynamic File Injection](#dynamic-file-injection)
+- [Image Quality](#image-quality)
+- [Parameters](#parameters)
+- [License](#license)
+
+---
+
+## Why Use This?
 
 Some agent tasks need fresh context every iteration:
 
@@ -29,8 +71,6 @@ For image resize/compression support (Pillow):
 ```bash
 pip install 'autourgos-preiteration[images]'
 ```
-
-Zero required dependencies. Works with any Autourgos agent.
 
 ---
 
@@ -56,7 +96,7 @@ result = agent.invoke("Open the browser and search for Python 3.13 release notes
 print(result)
 ```
 
-When used with a verbose `Agent` (`verbose=True`), `PreIterationMiddleware` also narrates its own actions into the agent's trace, right alongside the Thought/Action/Observation lines, e.g.:
+With `Agent(verbose=True)`, this middleware also narrates its own actions into the agent's trace:
 
 ```
 [PreIteration] Injected 1 file(s) before iteration 2.
@@ -64,7 +104,7 @@ When used with a verbose `Agent` (`verbose=True`), `PreIterationMiddleware` also
 
 ---
 
-## Run multiple callbacks
+## Run Multiple Callbacks
 
 ### SEQUENTIAL — one after another
 
@@ -77,9 +117,7 @@ def capture_screen(iteration: int) -> None:
 def log_step(iteration: int) -> None:
     print(f"Starting iteration {iteration}")
 
-middleware = PreIterationMiddleware(
-    callback=SEQUENTIAL[capture_screen, log_step]
-)
+middleware = PreIterationMiddleware(callback=SEQUENTIAL[capture_screen, log_step])
 ```
 
 ### PARALLEL — all at the same time
@@ -87,23 +125,18 @@ middleware = PreIterationMiddleware(
 ```python
 from autourgos_preiteration import PreIterationMiddleware, PARALLEL
 
-def capture_screen(iteration: int) -> None:
-    take_screenshot("/tmp/screen.png")
-
 def refresh_cache(iteration: int) -> None:
     cache.clear()
 
 def ping_health(iteration: int) -> None:
     requests.get("https://api.example.com/health")
 
-middleware = PreIterationMiddleware(
-    callback=PARALLEL[capture_screen, refresh_cache, ping_health]
-)
+middleware = PreIterationMiddleware(callback=PARALLEL[capture_screen, refresh_cache, ping_health])
 ```
 
 ---
 
-## Async callbacks
+## Async Callbacks
 
 ```python
 import asyncio
@@ -120,7 +153,7 @@ Works inside both `agent.invoke()` (sync) and `agent.ainvoke()` (async).
 
 ---
 
-## Dynamic file injection
+## Dynamic File Injection
 
 Pass a callable for `files` to generate paths per iteration:
 
@@ -135,9 +168,7 @@ middleware = PreIterationMiddleware(files=get_screenshot_path, image_quality="me
 
 ---
 
-## Image quality
-
-Control how much each screenshot costs in LLM tokens:
+## Image Quality
 
 | Value | Max size | JPEG quality | OpenAI detail | Approx tokens |
 |---|---|---|---|---|
@@ -147,9 +178,8 @@ Control how much each screenshot costs in LLM tokens:
 | `"low"` | 512 px | 60 | `"low"` | ~85 (flat) |
 | int 1–100 | 512 px if ≤512 | That value | `"low"` / `"auto"` | Varies |
 
-Resize requires Pillow: `pip install 'autourgos-preiteration[images]'`
-
-If Pillow is not installed, the `image_detail` hint is still applied (token savings from the detail flag alone), but no resize/recompress happens.
+Resize requires Pillow: `pip install 'autourgos-preiteration[images]'`. Without Pillow, the `image_detail`
+hint is still applied, but no resize/recompress happens.
 
 ---
 
@@ -163,38 +193,6 @@ If Pillow is not installed, the `image_detail` hint is still applied (token savi
 
 ---
 
-## Combine with other middleware
-
-```python
-from autourgos_preiteration import PreIterationMiddleware
-from autourgos_history import AgentHistoryMiddleware
-from autourgos_summarizer import AutoSummarizeMiddleware
-
-middleware = [
-    PreIterationMiddleware(callback=capture, files="/tmp/screen.png", image_quality="low"),
-    AutoSummarizeMiddleware(summarize_every=5),
-    AgentHistoryMiddleware(),
-]
-agent = Agent(llm=my_llm, middleware=middleware)
-```
-
----
-
-## Requirements
-
-- Python 3.9+
-- Pillow (optional) — for image resize: `pip install 'autourgos-preiteration[images]'`
-
----
-
-## Links
-
-- PyPI: https://pypi.org/project/autourgos-preiteration/
-- GitHub: https://github.com/devxjitin/autourgos-preiteration
-- Issues: https://github.com/devxjitin/autourgos-preiteration/issues
-
----
-
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Apache License 2.0, Copyright (c) 2026 Jitin Kumar Sengar
