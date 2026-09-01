@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.0.2] - 2026-09-01
+
+- Fixed: the `callback=` parameter's `on_iteration_start` handler used to
+  re-raise an exception after logging it. `autourgos-agent`'s
+  `CallbackManager` catches every exception a hook raises unconditionally,
+  so that re-raise could never actually reach or stop the agent run — its
+  only real effect was silently skipping file resolution for that
+  iteration. Now logs the error and still resolves/injects files, matching
+  how every other middleware in this ecosystem treats a hook failure.
+
 ## [3.0.0] - 2026-07-27 (unreleased on PyPI until now)
 
 - BREAKING: requires autourgos-agent>=2.0.2 (previously pinned to
