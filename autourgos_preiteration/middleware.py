@@ -342,10 +342,18 @@ class PreIterationMiddleware(CallbackHandler):
                     except RuntimeError:
                         asyncio.run(res)
             except Exception as exc:
+                # Not re-raised: autourgos-agent's CallbackManager catches
+                # every exception a hook raises (logging it at DEBUG and
+                # continuing the loop regardless) -- so a `raise` here could
+                # never actually reach or stop the agent run. It only had
+                # the side effect of skipping file-resolution below for
+                # this iteration. Log it (visibly, at ERROR) and fall
+                # through to file resolution instead, matching how every
+                # other middleware in this ecosystem treats a hook failure:
+                # a logged, non-fatal event, not a crash.
                 self.logger.error(
                     f"Error in pre-iteration callback at iteration {iteration}: {exc}"
                 )
-                raise
 
         # resolve files
         self._current_kwargs = {}

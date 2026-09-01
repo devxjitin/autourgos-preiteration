@@ -214,6 +214,32 @@ def test_on_before_iteration_returns_the_resolved_injection_kwargs(tmp_path):
     assert result == middleware.get_injection_kwargs()
 
 
+def test_callback_exception_is_logged_and_does_not_skip_file_resolution(tmp_path, caplog):
+    """A raising callback used to re-raise out of on_iteration_start -- but
+    autourgos-agent's CallbackManager catches every hook exception
+    unconditionally, so that raise could never actually stop the agent run;
+    its only real effect was silently skipping file resolution for that
+    iteration. The exception must be logged (visibly) and file resolution
+    must still proceed."""
+    img_path = str(tmp_path / "shot.png")
+    _make_image(img_path)
+
+    def bad_callback(iteration):
+        raise RuntimeError("callback boom")
+
+    middleware = PreIterationMiddleware(callback=bad_callback, files=img_path, image_quality="low")
+    agent = FakeAgent()
+
+    import logging
+    with caplog.at_level(logging.ERROR):
+        middleware.on_iteration_start(1, agent=agent)  # must not raise
+
+    assert any("callback boom" in r.message for r in caplog.records)
+    result = middleware.on_before_iteration(1, agent=agent)
+    assert result is not None
+    assert "files" in result
+
+
 def test_on_before_iteration_returns_none_when_no_files_resolved():
     middleware = PreIterationMiddleware()  # no files configured
     agent = FakeAgent()
