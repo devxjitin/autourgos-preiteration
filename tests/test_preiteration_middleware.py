@@ -143,6 +143,36 @@ def test_image_cache_avoids_reprocessing_same_image(tmp_path, monkeypatch):
     assert os.path.exists(first_processed)
 
 
+def test_image_cache_is_bounded_and_evicts_oldest(tmp_path, monkeypatch):
+    """Regression: the shared module-level image cache had no size bound, so
+    a dynamic files= callable generating a new source path every iteration
+    (a documented pattern) grew the cache -- and its backing temp files --
+    without limit for the life of the process. Verify it now evicts the
+    oldest entry once it exceeds the cap, and removes that entry's temp
+    file."""
+    monkeypatch.setattr(mw_module, "_IMAGE_CACHE_MAX_ENTRIES", 3)
+
+    paths = []
+    for i in range(5):
+        p = str(tmp_path / f"shot_{i}.png")
+        _make_image(p, size=(20, 20))
+        paths.append(p)
+
+    processed = []
+    for p in paths:
+        processed.append(mw_module._preprocess_image(p, "low", mw_module.logging.getLogger("t")))
+
+    assert len(mw_module._image_cache) == 3
+    # the two oldest entries' cache keys must be gone...
+    assert (paths[0], "low") not in mw_module._image_cache
+    assert (paths[1], "low") not in mw_module._image_cache
+    # ...and their temp files actually removed, not just evicted from the dict.
+    assert not os.path.exists(processed[0])
+    assert not os.path.exists(processed[1])
+    # the most recent entries must survive.
+    assert os.path.exists(processed[4])
+
+
 def test_narrates_via_agent_logger_middleware_when_files_injected(tmp_path):
     """When files are actually resolved and injected for an iteration, the
     middleware should call agent.logger.middleware(...) with source
@@ -248,6 +278,36 @@ def test_on_before_iteration_returns_none_when_no_files_resolved():
     result = middleware.on_before_iteration(1, agent=agent)
 
     assert result is None
+
+
+def test_async_callback_does_not_deadlock_when_called_from_running_loop():
+    """Regression: on_iteration_start used to run an async callback's
+    coroutine via asyncio.get_running_loop() + run_coroutine_threadsafe(...)
+    .result(). Whenever get_running_loop() succeeds, the calling thread IS
+    the loop's own thread -- so blocking that same thread on .result() while
+    waiting for the loop to run the scheduled coroutine deadlocked every
+    time, not just in some edge case. This drives on_iteration_start from
+    inside an actually-running event loop (mirroring how agent.ainvoke()
+    calls sync CallbackHandler hooks directly from the loop's thread) and
+    asserts it completes instead of hanging."""
+    import asyncio
+
+    ran = {"called": False}
+
+    async def async_callback(iteration):
+        ran["called"] = True
+
+    middleware = PreIterationMiddleware(callback=async_callback)
+    agent = FakeAgent()
+
+    async def drive():
+        # Calling the sync hook directly from within a running loop, same
+        # as agent.ainvoke() does for CallbackHandler hooks.
+        middleware.on_iteration_start(1, agent=agent)
+
+    asyncio.run(asyncio.wait_for(drive(), timeout=5))
+
+    assert ran["called"] is True
 
 
 def test_real_agent_llm_invoke_actually_receives_injected_kwargs(tmp_path):

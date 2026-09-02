@@ -4,6 +4,7 @@ middleware.py — SEQUENTIAL, PARALLEL, and PreIterationMiddleware.
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import inspect
 import logging
@@ -16,6 +17,45 @@ from .base import CallbackHandler
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+def _run_coroutine_sync(coro: Any) -> Any:
+    """
+    Run a coroutine to completion from synchronous code, safe whether or
+    not the calling thread already has a running event loop.
+
+    ``on_iteration_start`` is a sync CallbackHandler hook, but
+    ``agent.ainvoke()`` calls it directly from the event-loop thread (not
+    via a separate thread), so ``asyncio.get_running_loop()`` succeeding
+    here means the loop IS the current thread. Previously this branch did
+    ``asyncio.run_coroutine_threadsafe(res, loop).result()`` -- scheduling
+    the coroutine on that same loop and then blocking the very thread the
+    loop needs in order to ever run it. That is not an edge case: whenever
+    ``get_running_loop()`` succeeds, we ARE on the loop's own thread, so
+    that call deadlocked every single time it was reached. Running the
+    coroutine on an isolated thread with its own fresh loop sidesteps this
+    entirely -- it never touches the caller's loop.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running on this thread; safe to drive the coroutine directly.
+        return asyncio.run(coro)
+
+    outcome: Dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            outcome["result"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")
+
 
 def is_async_callable(obj: Any) -> bool:
     if obj is None:
@@ -124,16 +164,18 @@ class PARALLEL:
         return None
 
     async def _run_async(self, iteration: int) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # _run_async is a coroutine function -- its body only ever executes
+        # once something drives it inside an active event loop (this file's
+        # own _run_coroutine_sync, or a caller awaiting it directly), so
+        # asyncio.get_running_loop() always succeeds here. The previous
+        # RuntimeError fallback (creating and installing a brand new loop)
+        # was unreachable dead code.
+        loop = asyncio.get_running_loop()
 
         tasks = []
         for func in self.funcs:
             if is_async_callable(func):
-                tasks.append(asyncio.ensure_future(func(iteration), loop=loop))
+                tasks.append(asyncio.ensure_future(func(iteration)))
             else:
                 tasks.append(loop.run_in_executor(None, func, iteration))
         if tasks:
@@ -163,8 +205,15 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 # always was, since nothing ever removed them. That leaked one temp file per
 # iteration for the entire life of the process for the package's own
 # headline use case (a screenshot injected on every iteration).
-_image_cache: Dict[Tuple[str, str], Tuple[float, str]] = {}
+_image_cache: "collections.OrderedDict[Tuple[str, str], Tuple[float, str]]" = collections.OrderedDict()
 _image_cache_lock = threading.Lock()
+# Caps distinct (path, quality) entries -- e.g. dynamic files= callables that
+# generate a new source path every iteration (per-iteration screenshot
+# filenames) would otherwise grow this process-lifetime global cache and its
+# backing temp files without bound. Same-path re-processing (the documented
+# headline use case) never grows past one entry per (path, quality), so this
+# only bites the dynamic-path pattern.
+_IMAGE_CACHE_MAX_ENTRIES = 256
 
 
 def _is_image(path: str) -> bool:
@@ -194,6 +243,8 @@ def _preprocess_image(
     cache_key = (path, quality_key)
     with _image_cache_lock:
         cached = _image_cache.get(cache_key)
+        if cached is not None:
+            _image_cache.move_to_end(cache_key)
     if cached is not None:
         cached_mtime, cached_path = cached
         if cached_mtime == mtime and os.path.exists(cached_path):
@@ -222,7 +273,8 @@ def _preprocess_image(
         return path
 
     try:
-        img = Image.open(path).convert("RGB")
+        with Image.open(path) as src:
+            img = src.convert("RGB")
         if max_dim is not None:
             w, h = img.size
             if max(w, h) > max_dim:
@@ -233,12 +285,22 @@ def _preprocess_image(
         )
         tmp.close()
         img.save(tmp.name, format="JPEG", quality=jpeg_quality, optimize=True)
+        evicted: List[str] = []
         with _image_cache_lock:
             stale = _image_cache.get(cache_key)
             _image_cache[cache_key] = (mtime, tmp.name)
+            _image_cache.move_to_end(cache_key)
+            while len(_image_cache) > _IMAGE_CACHE_MAX_ENTRIES:
+                _, (_, evicted_path) = _image_cache.popitem(last=False)
+                evicted.append(evicted_path)
         if stale is not None and stale[1] != tmp.name:
             try:
                 os.remove(stale[1])
+            except OSError:
+                pass
+        for evicted_path in evicted:
+            try:
+                os.remove(evicted_path)
             except OSError:
                 pass
         if created_files is not None:
@@ -336,11 +398,7 @@ class PreIterationMiddleware(CallbackHandler):
             try:
                 res = self.callback(iteration)
                 if inspect.iscoroutine(res):
-                    try:
-                        loop = asyncio.get_running_loop()
-                        asyncio.run_coroutine_threadsafe(res, loop).result()
-                    except RuntimeError:
-                        asyncio.run(res)
+                    _run_coroutine_sync(res)
             except Exception as exc:
                 # Not re-raised: autourgos-agent's CallbackManager catches
                 # every exception a hook raises (logging it at DEBUG and

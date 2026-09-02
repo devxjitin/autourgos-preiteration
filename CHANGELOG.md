@@ -1,5 +1,62 @@
 # Changelog
 
+## [3.0.7] - 2026-09-01
+
+- Dependency: raised the `autourgos-agent` floor from `>=2.0.2` to
+  `>=3.1.0`. `autourgos-agent` 3.1.0 added sync-hook thread offloading in
+  `CallbackManager` under `ainvoke()` (a sync `on_iteration_start`/etc.
+  handler now runs off the event-loop thread instead of inline) -- below
+  that version, a blocking call inside this middleware's hooks would stall
+  every other concurrent `ainvoke()` run sharing that thread. The old
+  floor allowed resolving against a pre-3.1.0 install that lacks this fix.
+  No code changes here.
+
+## [3.0.6] - 2026-09-01
+
+- Metadata: added `maintainers` (Sonia, Vishwanil Suman) to `pyproject.toml`,
+  and linked the README's existing Sonia contributor badge to her GitHub
+  profile (https://github.com/dahiyasonia). No code changes.
+
+## [3.0.5] - 2026-09-01
+
+- Fixed: the shared module-level image preprocessing cache had no size
+  bound. A dynamic `files=` callable generating a new source path every
+  iteration (a documented pattern, e.g. per-iteration screenshot
+  filenames) grew the cache -- and its backing temp files -- without limit
+  for the life of the process. Now capped at 256 entries
+  (`_IMAGE_CACHE_MAX_ENTRIES`), evicting the least-recently-used entry
+  (and deleting its temp file) once exceeded. The documented headline use
+  case -- repeatedly processing the same source path -- never grows past
+  one entry per (path, quality) and is unaffected.
+- Fixed: `_preprocess_image` never closed the `PIL.Image` opened for the
+  source file (`Image.open(path).convert("RGB")`), relying on GC. Now
+  opened via `with Image.open(path) as src: ...`, closing the source
+  handle explicitly once the RGB-converted copy is made.
+
+## [3.0.4] - 2026-09-01
+
+- Cleaned up: `PARALLEL._run_async`'s fallback that created and installed a
+  brand new event loop when `asyncio.get_running_loop()` raised was dead
+  code -- `_run_async` is a coroutine function whose body only ever executes
+  once something is already driving it inside a running loop, so that
+  branch could never actually be reached. Simplified to call
+  `asyncio.get_running_loop()` directly. No behavior change.
+
+## [3.0.3] - 2026-09-01
+
+- Fixed: an async `callback=` coroutine's result used to be driven via
+  `asyncio.get_running_loop()` + `run_coroutine_threadsafe(res, loop).result()`.
+  Whenever `get_running_loop()` succeeds, the calling thread IS the loop's
+  own thread -- `agent.ainvoke()` calls the sync `on_iteration_start` hook
+  directly from the event-loop thread, not from a separate one -- so
+  scheduling the coroutine on that same loop and then blocking that thread
+  waiting for the loop to run it deadlocked every time this branch was
+  reached, not just in some edge case. The coroutine is now driven via a
+  helper that runs it on an isolated thread with its own fresh event loop
+  whenever a loop is already running on the calling thread, sidestepping
+  the deadlock entirely. No change to the no-running-loop case (still
+  `asyncio.run(coro)` directly).
+
 ## [3.0.2] - 2026-09-01
 
 - Fixed: the `callback=` parameter's `on_iteration_start` handler used to

@@ -29,7 +29,7 @@ try:
     from importlib.metadata import version as _meta_version
     __version__ = _meta_version("autourgos-preiteration")
 except Exception:
-    __version__ = "3.0.1"
+    __version__ = "3.0.7"
 
 __all__ = [
     "PreIterationMiddleware",
