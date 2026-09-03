@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autourgos-preiteration"
-version = "3.0.7"
+version = "3.0.8"
 description = "Pre-iteration middleware for Autourgos agents — run callbacks and inject files before each agent iteration."
 readme = "README.md"
 requires-python = ">=3.9"
