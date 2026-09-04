@@ -30,6 +30,9 @@ result = agent.invoke("Open the browser and search for Python 3.13 release notes
 - **Dynamic file injection** — pass a callable for `files` to generate a fresh path per iteration
 - **Built-in image compression** (via optional Pillow) — from a flat ~85 tokens (`"low"`) to no resize
   (`"auto"`)
+- **Concurrency-safe** — per-run resolved files/temp-file state isolated via `contextvars.ContextVar`
+  (`autourgos-core`'s `RunScopedState`), correct for both concurrent threads and concurrent `asyncio`
+  tasks sharing one thread
 - Zero required dependencies; works with any Autourgos agent
 
 ---

@@ -27,7 +27,7 @@ from .middleware import (
 
 from autourgos_core import package_version
 
-__version__ = package_version("autourgos-preiteration", fallback="3.0.9")
+__version__ = package_version("autourgos-preiteration", fallback="3.1.0")
 
 __all__ = [
     "PreIterationMiddleware",

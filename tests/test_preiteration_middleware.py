@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -337,3 +338,64 @@ def test_real_agent_llm_invoke_actually_receives_injected_kwargs(tmp_path):
     assert len(received_kwargs["files"]) == 1
     assert os.path.exists(received_kwargs["files"][0])
     assert received_kwargs.get("image_detail") == "low"
+
+
+def test_two_concurrent_runs_on_one_shared_middleware_do_not_leak_files(tmp_path):
+    """
+    Sprint 5 (RunScopedState) regression: _current_kwargs/_created_temp_files
+    used to be flat instance attributes -- one PreIterationMiddleware
+    instance shared by two concurrent runs (two threads here, matching two
+    concurrent invoke() calls) would let one run's on_iteration_start
+    overwrite the other's in-flight _current_kwargs, so get_injection_kwargs()
+    could hand one run's screenshot to the other's LLM call. Now
+    contextvars-backed, so each thread's resolved files stay its own.
+    """
+    path_a = str(tmp_path / "shot_a.png")
+    path_b = str(tmp_path / "shot_b.png")
+    _make_image(path_a, size=(50, 50))
+    Image.new("RGB", (50, 50), color=(10, 200, 30)).save(path_b, format="PNG")
+
+    thread_local = threading.local()
+
+    def files_fn(iteration):
+        return thread_local.path
+
+    middleware = PreIterationMiddleware(files=files_fn, image_quality="low")
+
+    errors = []
+    barrier = threading.Barrier(2)
+
+    def drive(own_path, other_path):
+        try:
+            thread_local.path = own_path
+            middleware.on_iteration_start(1, agent=FakeAgent())
+            barrier.wait(timeout=5)
+            for _ in range(20):
+                kwargs = middleware.get_injection_kwargs()
+                assert "files" in kwargs, "lost own injected files"
+                resolved = kwargs["files"][0]
+                assert os.path.exists(resolved)
+                # can't compare paths directly (preprocessing writes a new
+                # temp file), but the source image's pixel data must match
+                # the run's OWN source, never the other run's
+                with Image.open(resolved) as img, Image.open(own_path) as expected:
+                    got_px = img.getpixel((0, 0))
+                    want_px = expected.getpixel((0, 0))
+                    # JPEG requantizes color (image_quality="low"), so allow
+                    # lossy-compression drift -- only a genuinely different
+                    # source image (the other thread's) would differ this
+                    # much (each channel >150 apart on a 30-vs-200 swap).
+                    assert all(abs(g - w) < 40 for g, w in zip(got_px, want_px)), (
+                        f"got {got_px}, expected close to {want_px} -- leaked other thread's image?"
+                    )
+        except Exception as exc:  # pragma: no cover - surfaced via errors list
+            errors.append(exc)
+
+    t_a = threading.Thread(target=drive, args=(path_a, path_b))
+    t_b = threading.Thread(target=drive, args=(path_b, path_a))
+    t_a.start()
+    t_b.start()
+    t_a.join(timeout=10)
+    t_b.join(timeout=10)
+
+    assert errors == []

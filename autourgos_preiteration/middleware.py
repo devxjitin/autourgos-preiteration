@@ -13,6 +13,8 @@ import tempfile
 import threading
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
+from autourgos_core import RunScopedState
+
 from .base import CallbackHandler
 
 
@@ -384,13 +386,21 @@ class PreIterationMiddleware(CallbackHandler):
         self.callback      = callback
         self._files        = files
         self.image_quality = image_quality
-        self._current_kwargs: Dict[str, Any] = {}
+        # Run-scoped (contextvars-backed), not a flat instance attribute:
+        # one PreIterationMiddleware instance's on_iteration_start/
+        # get_injection_kwargs/on_agent_end run within a single invoke()/
+        # ainvoke() call, but a flat attribute let two concurrent runs --
+        # two threads, or two interleaved ainvoke() tasks on the same
+        # event-loop thread -- clobber each other: one run's screenshot
+        # could leak into a concurrent run's LLM call, or one run's cleanup
+        # could delete temp files a still-in-flight run was still using.
+        self._current_kwargs: "RunScopedState[Dict[str, Any]]" = RunScopedState(default_factory=dict)
         self.logger = logging.getLogger(__name__)
         # Temp files created (via Pillow preprocessing) during the current
         # agent run. Cleaned up in on_agent_end/on_agent_error, but only if
         # they are no longer referenced by the shared _image_cache (a cache
         # hit for the same unchanged image on a later run must keep working).
-        self._created_temp_files: List[str] = []
+        self._created_temp_files: "RunScopedState[List[str]]" = RunScopedState(default_factory=list)
 
     def on_iteration_start(self, iteration: int, agent: Any = None, **kwargs: Any) -> None:
         # run callback
@@ -414,7 +424,7 @@ class PreIterationMiddleware(CallbackHandler):
                 )
 
         # resolve files
-        self._current_kwargs = {}
+        current_kwargs = self._current_kwargs.reset()
         if self._files is not None:
             resolved = self._files(iteration) if callable(self._files) else self._files
             if resolved:
@@ -428,15 +438,15 @@ class PreIterationMiddleware(CallbackHandler):
                     processed = [
                         _preprocess_image(
                             f, self.image_quality, self.logger,
-                            created_files=self._created_temp_files,
+                            created_files=self._created_temp_files.get(),
                         )
                         if _is_image(f) else f
                         for f in raw
                     ]
-                    self._current_kwargs["files"] = processed
+                    current_kwargs["files"] = processed
                     detail = _detail_for(self.image_quality)
                     if detail is not None:
-                        self._current_kwargs["image_detail"] = detail
+                        current_kwargs["image_detail"] = detail
 
                     narrate_logger = getattr(agent, "logger", None)
                     if narrate_logger:
@@ -447,7 +457,7 @@ class PreIterationMiddleware(CallbackHandler):
 
     def get_injection_kwargs(self) -> Dict[str, Any]:
         """Return file-injection kwargs to pass to the LLM call."""
-        return dict(self._current_kwargs)
+        return dict(self._current_kwargs.get())
 
     def on_before_iteration(self, iteration: int, agent: Any = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """
@@ -471,11 +481,12 @@ class PreIterationMiddleware(CallbackHandler):
         ``_image_cache`` (so a later run with the same unchanged image can
         still hit the cache and reuse it without reprocessing).
         """
-        if not self._created_temp_files:
+        created_temp_files = self._created_temp_files.get()
+        if not created_temp_files:
             return
         with _image_cache_lock:
             live_cached_paths = {v[1] for v in _image_cache.values()}
-        for tmp_path in self._created_temp_files:
+        for tmp_path in created_temp_files:
             if tmp_path in live_cached_paths:
                 continue
             try:
@@ -485,7 +496,7 @@ class PreIterationMiddleware(CallbackHandler):
                 self.logger.debug(
                     "Could not remove temp file %r during cleanup", tmp_path, exc_info=True,
                 )
-        self._created_temp_files = []
+        self._created_temp_files.reset()
 
     def on_agent_end(self, response: str, agent: Any = None, **kwargs: Any) -> None:
         self._cleanup_temp_files()

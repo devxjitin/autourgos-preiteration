@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.1.0] - 2026-09-05
+
+- **Fixed a real concurrency bug:** `_current_kwargs`/`_created_temp_files` were flat instance attributes — a single `PreIterationMiddleware` instance shared by two concurrent runs (two threads, or two interleaved `ainvoke()` tasks) could leak one run's resolved screenshot into the other's LLM call, or have one run's cleanup delete temp files a still-in-flight run was still using. Migrated to `autourgos_core.RunScopedState` (contextvars-backed). No behavior change for the common single-run-at-a-time case. Bumped `autourgos-core>=0.8.0`. Reproduced the old bug live (two concurrent runs sharing one instance, one run's image leaked into the other's LLM call) before fixing; live-verified the fix against real concurrent `ainvoke()` calls with a real Azure LLM (each call correctly saw its own image) plus a threaded regression test.
+
 ## [3.0.9] - 2026-09-04
 
 - Internal: `__version__` resolution moved to `autourgos_core.package_version()` (new `autourgos-core>=0.3.0` dependency). No functional change.
