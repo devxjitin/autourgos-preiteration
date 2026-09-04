@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autourgos-preiteration"
-version = "3.0.8"
+version = "3.0.9"
 description = "Pre-iteration middleware for Autourgos agents — run callbacks and inject files before each agent iteration."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,7 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-dependencies = ["autourgos-agent>=3.1.0"]
+dependencies = ["autourgos-agent>=3.1.0", "autourgos-core>=0.3.0"]
 
 [project.optional-dependencies]
 images = ["Pillow>=9.0"]

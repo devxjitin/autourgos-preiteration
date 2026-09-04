@@ -25,11 +25,9 @@ from .middleware import (
     is_async_callable,
 )
 
-try:
-    from importlib.metadata import version as _meta_version
-    __version__ = _meta_version("autourgos-preiteration")
-except Exception:
-    __version__ = "3.0.8"
+from autourgos_core import package_version
+
+__version__ = package_version("autourgos-preiteration", fallback="3.0.9")
 
 __all__ = [
     "PreIterationMiddleware",
